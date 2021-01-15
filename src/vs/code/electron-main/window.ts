@@ -424,11 +424,11 @@ export class CodeWindow extends Disposable implements ICodeWindow {
 			this.dispose();
 		});
 
-		// Prevent loading of svgs
-		this._win.webContents.session.webRequest.onBeforeRequest(null!, (details, callback) => {
-			if (details.url.indexOf('.svg') > 0) {
+		// Prevent loading of remote svgs
+		this._win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+			if (details.url.endsWith('.svg')) {
 				const uri = URI.parse(details.url);
-				if (uri && !uri.scheme.match(/file/i) && uri.path.endsWith('.svg')) {
+				if (uri && uri.scheme.toLowerCase() !== 'file') {
 					return callback({ cancel: true });
 				}
 			}
@@ -436,12 +436,24 @@ export class CodeWindow extends Disposable implements ICodeWindow {
 			return callback({});
 		});
 
-		this._win.webContents.session.webRequest.onHeadersReceived(null!, (details, callback) => {
+		this._win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
 			const responseHeaders = details.responseHeaders as Record<string, (string) | (string[])>;
-
 			const contentType = (responseHeaders['content-type'] || responseHeaders['Content-Type']);
-			if (contentType && Array.isArray(contentType) && contentType.some(x => x.toLowerCase().indexOf('image/svg') >= 0)) {
-				return callback({ cancel: true });
+
+			if (contentType && Array.isArray(contentType)) {
+				// https://github.com/microsoft/vscode/issues/97564
+				// ensure local svg files have Content-Type image/svg+xml
+				if (details.url.endsWith('.svg')) {
+					const uri = URI.parse(details.url);
+					if (uri && uri.scheme.toLowerCase() === 'file') {
+						responseHeaders['Content-Type'] = ['image/svg+xml'];
+						return callback({ cancel: false, responseHeaders });
+					}
+				}
+
+				if (contentType.some(x => x.toLowerCase().includes('image/svg'))) {
+					return callback({ cancel: true });
+				}
 			}
 
 			return callback({ cancel: false });
