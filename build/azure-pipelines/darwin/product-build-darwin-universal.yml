@@ -9,6 +9,23 @@ steps:
       azureSubscription: "vscode-builds-subscription"
       KeyVaultName: vscode
 
+  - script: |
+      set -e
+      cat << EOF > ~/.netrc
+      machine github.com
+      login vscode
+      password $(github-distro-mixin-password)
+      EOF
+
+      git config user.email "vscode@microsoft.com"
+      git config user.name "VSCode"
+    displayName: Prepare tooling
+
+  - script: |
+      set -e
+      git pull --no-rebase https://github.com/$(VSCODE_MIXIN_REPO).git $(node -p "require('./package.json').distro")
+    displayName: Merge distro
+
   - download: current
     artifact: vscode-darwin-x64
     displayName: Download x64 artifact
