@@ -1,0 +1,131 @@
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "12.18.3"
+
+  - task: AzureKeyVault@1
+    displayName: "Azure Key Vault: Get Secrets"
+    inputs:
+      azureSubscription: "vscode-builds-subscription"
+      KeyVaultName: vscode
+
+  - download: current
+    artifact: vscode-darwin-x64
+    displayName: Download x64 artifact
+
+  - download: current
+    artifact: vscode-darwin-arm64
+    displayName: Download arm64 artifact
+
+  - script: |
+      set -e
+      cd build
+      yarn && yarn compile
+    displayName: Build darwin helper scripts
+    condition: succeeded()
+
+  - script: |
+      set -e
+      unzip $(Pipeline.Workspace)/vscode-darwin-x64/VSCode-darwin-x64.zip -d $(agent.builddirectory)/vscode-x64
+      unzip $(Pipeline.Workspace)/vscode-darwin-arm64/VSCode-darwin-arm64.zip -d $(agent.builddirectory)/vscode-arm64
+      DEBUG=* node build/darwin/create-universal-app.js
+    displayName: Create Universal App
+    condition: succeeded()
+
+  - script: |
+      set -e
+      security create-keychain -p pwd $(agent.tempdirectory)/buildagent.keychain
+      security default-keychain -s $(agent.tempdirectory)/buildagent.keychain
+      security unlock-keychain -p pwd $(agent.tempdirectory)/buildagent.keychain
+      echo "$(macos-developer-certificate)" | base64 -D > $(agent.tempdirectory)/cert.p12
+      security import $(agent.tempdirectory)/cert.p12 -k $(agent.tempdirectory)/buildagent.keychain -P "$(macos-developer-certificate-key)" -T /usr/bin/codesign
+      security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k pwd $(agent.tempdirectory)/buildagent.keychain
+      VSCODE_ARCH="$(VSCODE_ARCH)" DEBUG=electron-osx-sign* node build/darwin/sign.js
+    displayName: Set Hardened Entitlements
+    condition: succeeded()
+
+  - script: |
+      set -e
+      pushd $(agent.builddirectory)/VSCode-darwin-$(VSCODE_ARCH) && zip -r -X -y $(agent.builddirectory)/VSCode-darwin-$(VSCODE_ARCH).zip * && popd
+    displayName: Archive build
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+    inputs:
+      ConnectedServiceName: "ESRP CodeSign"
+      FolderPath: "$(agent.builddirectory)"
+      Pattern: "VSCode-darwin-$(VSCODE_ARCH).zip"
+      signConfigType: inlineSignParams
+      inlineOperation: |
+        [
+          {
+            "keyCode": "CP-401337-Apple",
+            "operationSetCode": "MacAppDeveloperSign",
+            "parameters": [
+              {
+                "parameterName": "Hardening",
+                "parameterValue": "--options=runtime"
+              }
+            ],
+            "toolName": "sign",
+            "toolVersion": "1.0"
+          }
+        ]
+      SessionTimeout: 60
+    displayName: Codesign
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - script: |
+      zip -d $(agent.builddirectory)/VSCode-darwin-$(VSCODE_ARCH).zip "*.pkg"
+    displayName: Clean
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - script: |
+      APP_ROOT=$(agent.builddirectory)/VSCode-darwin-$(VSCODE_ARCH)
+      APP_NAME="`ls $APP_ROOT | head -n 1`"
+      BUNDLE_IDENTIFIER=$(node -p "require(\"$APP_ROOT/$APP_NAME/Contents/Resources/app/product.json\").darwinUniversalBundleIdentifier")
+      echo "##vso[task.setvariable variable=BundleIdentifier]$BUNDLE_IDENTIFIER"
+    displayName: Export bundle identifier
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+    inputs:
+      ConnectedServiceName: "ESRP CodeSign"
+      FolderPath: "$(agent.builddirectory)"
+      Pattern: "VSCode-darwin-$(VSCODE_ARCH).zip"
+      signConfigType: inlineSignParams
+      inlineOperation: |
+        [
+          {
+            "keyCode": "CP-401337-Apple",
+            "operationSetCode": "MacAppNotarize",
+            "parameters": [
+              {
+                "parameterName": "BundleId",
+                "parameterValue": "$(BundleIdentifier)"
+              }
+            ],
+            "toolName": "sign",
+            "toolVersion": "1.0"
+          }
+        ]
+      SessionTimeout: 60
+    displayName: Notarization
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - script: |
+      set -e
+      APP_ROOT=$(agent.builddirectory)/VSCode-darwin-$(VSCODE_ARCH)
+      APP_NAME="`ls $APP_ROOT | head -n 1`"
+      "$APP_ROOT/$APP_NAME/Contents/Resources/app/bin/code" --export-default-configuration=.build
+    displayName: Verify start after signing (export configuration)
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - publish: $(Agent.BuildDirectory)/VSCode-darwin-$(VSCODE_ARCH).zip
+    artifact: vscode-darwin-$(VSCODE_ARCH)
+    displayName: Publish archive
+    condition: and(succeeded(), ne(variables['VSCODE_PUBLISH'], 'false'))
+
+  - task: ms.vss-governance-buildtask.governance-build-task-component-detection.ComponentGovernanceComponentDetection@0
+    displayName: "Component Detection"
+    continueOnError: true
