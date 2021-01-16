@@ -5,7 +5,7 @@
 
 'use strict';
 
-import { makeUniversalApp } from 'universal';
+import { makeUniversalApp } from 'vscode-universal';
 import * as path from 'path';
 import * as product from '../../product.json';
 
