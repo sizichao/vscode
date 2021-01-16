@@ -43,6 +43,11 @@ steps:
 
   - script: |
       set -e
+      node build/azure-pipelines/mixin
+    displayName: Mix in quality
+
+  - script: |
+      set -e
       unzip $(Pipeline.Workspace)/vscode-darwin-x64/VSCode-darwin-x64.zip -d $(agent.builddirectory)/vscode-x64
       unzip $(Pipeline.Workspace)/vscode-darwin-arm64/VSCode-darwin-arm64.zip -d $(agent.builddirectory)/vscode-arm64
       DEBUG=* node build/darwin/create-universal-app.js
