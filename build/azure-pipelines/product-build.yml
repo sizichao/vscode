@@ -257,7 +257,7 @@ stages:
             steps:
               - template: darwin/product-build-darwin.yml
 
-  - ${{ if and(eq(parameters.VSCODE_COMPILE_ONLY, false), and(eq(parameters.VSCODE_BUILD_MACOS, true), eq(parameters.VSCODE_BUILD_MACOS_ARM64, true))) }}:
+  - ${{ if and(and(eq(parameters.VSCODE_COMPILE_ONLY, false), ne(variables['VSCODE_PUBLISH'], 'false')), and(eq(parameters.VSCODE_BUILD_MACOS, true), eq(parameters.VSCODE_BUILD_MACOS_ARM64, true))) }}:
     - stage: macOS_universal
       dependsOn:
         - macOS
